@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Foto da Conferência</title>
+<style>
+  /* Tela de bancada: câmera grande, dados da venda numa faixa, dois botões grandes. */
+  :root{--bg:#eef1f4;--card:#ffffff;--tx:#17202b;--mut:#5b6876;--bd:#d3d9e0;--pri:#0b62d6;--ok:#16794a;--err:#c0392b;--warn:#a46300}
+  @media (prefers-color-scheme:dark){:root{--bg:#11151a;--card:#1a2028;--tx:#e5e9ee;--mut:#97a3b0;--bd:#2d3540;--pri:#3d8bff;--ok:#33b36b;--err:#ff6b5e;--warn:#e0a030;color-scheme:dark}}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 "Segoe UI",system-ui,Roboto,sans-serif}
+  main{max-width:1100px;margin:0 auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;min-height:100%}
+  header{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px 14px}
+  header b{font-size:17px} .k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-right:4px}
+  .stage{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:16/9;max-width:100%;display:flex;align-items:center;justify-content:center}
+  video,canvas{width:100%;height:100%;object-fit:contain;display:block}
+  .ph{position:absolute;color:#bbb;font-size:16px;text-align:center;padding:16px}
+  .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .2s}
+  .acoes{display:flex;gap:10px;flex-wrap:wrap}
+  button{font:inherit;font-size:18px;font-weight:600;padding:14px 22px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer;flex:1 1 200px}
+  button.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+  button.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button:focus-visible{outline:3px solid var(--warn);outline-offset:2px}
+  [hidden]{display:none!important}
+  #status{padding:10px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--card);font-size:15px}
+  .s-ok{color:var(--ok)} .s-err{color:var(--err)} .s-warn{color:var(--warn)}
+  code{font:13px ui-monospace,Consolas,monospace;word-break:break-all}
+  .pasta{font-size:13px;color:var(--mut);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .pasta button{font-size:13px;padding:6px 10px;flex:0 0 auto;font-weight:500}
+</style>
+</head>
+<body>
+<main>
+  <header id="cab"><span class="k">Carregando…</span></header>
+
+  <div class="stage">
+    <span class="ph" id="ph">Abrindo a webcam…</span>
+    <video id="video" playsinline muted></video>
+    <canvas id="previa" hidden></canvas>
+    <div class="flash" id="flash"></div>
+  </div>
+
+  <div class="acoes" id="a_cap"><button id="b_cap" class="pri" disabled>📸 Capturar (Enter)</button></div>
+  <div class="acoes" id="a_rev" hidden>
+    <button id="b_refazer">↺ Refazer (Esc)</button>
+    <button id="b_ok" class="ok">✔ OK, salvar (Enter)</button>
+  </div>
+
+  <div id="status">Aguardando a webcam.</div>
+  <div class="pasta"><span id="pastaInfo">Pasta: verificando…</span><button id="b_pasta">Trocar pasta</button></div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $("video"), previa = $("previa");
+  let stream = null, pasta = null, revisando = false, salvando = false;
+
+  // ---------- dados da venda: vêm do painel no link (#...), já com o carimbo pronto
+  const p = new URLSearchParams(location.hash.slice(1));
+  const c = {
+    captura_data: p.get("d") || "", captura_hora: p.get("h") || "",
+    venda: p.get("v") || "", sku: p.get("s") || "",
+    nome: p.get("n") || "", apelido: p.get("a") || "",
+    venda_em: p.get("dv") || "", arquivo: p.get("arq") || "", conta: p.get("c") || "",
+  };
+  try { history.replaceState(null, "", location.pathname); } catch {}  // tira os dados do endereço
+  const valido = c.captura_data && c.captura_hora && c.venda && c.arquivo && /\.jpg$/i.test(c.arquivo) && !/[\\/:*?"<>|]/.test(c.arquivo);
+
+  function status(html, tipo = "") { const s = $("status"); s.className = tipo ? "s-" + tipo : ""; s.innerHTML = html; }
+  const esc = s => String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+
+  if (!valido) {
+    $("cab").innerHTML = `<b>Sem dados da venda</b>`;
+    $("ph").textContent = "Abra esta página pelo botão Foto do painel.";
+    status("Esta página precisa ser aberta pelo botão <b>Foto</b> do painel, que envia os dados da venda.", "err");
+    $("b_pasta").hidden = true;
+    return;
+  }
+  $("cab").innerHTML = `
+    <span><span class="k">Venda</span><b>${esc(c.venda)}</b></span>
+    <span><span class="k">SKU</span><b>${esc(c.sku)}</b></span>
+    <span><span class="k">Cliente</span>${esc(c.nome)} (${esc(c.apelido)})</span>
+    <span><span class="k">Venda em</span>${esc(c.venda_em)}</span>
+    <span><span class="k">Captura</span>${esc(c.captura_data)} ${esc(c.captura_hora)}</span>`;
+  document.title = `Foto ${c.venda}`;
+
+  // ---------- pasta (escolhida uma vez; o navegador lembra)
+  function idb(modo, fn) {
+    return new Promise(res => {
+      try {
+        const r = indexedDB.open("foto_conferencia", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("h");
+        r.onsuccess = () => { try { const tx = r.result.transaction("h", modo); const q = fn(tx.objectStore("h")); tx.oncomplete = () => res(q && q.result); tx.onerror = () => res(null); } catch { res(null); } };
+        r.onerror = () => res(null);
+      } catch { res(null); }
+    });
+  }
+  const temPicker = "showDirectoryPicker" in window;
+  function mostrarPasta() {
+    $("pastaInfo").textContent = !temPicker ? "Este navegador não salva em pasta: a foto vai para Downloads. Use Chrome ou Edge." :
+      pasta ? `Pasta: ${pasta.name}\\${c.captura_data.slice(0, 7)}` : "Pasta: ainda não escolhida (será pedida ao salvar).";
+  }
+  async function escolherPasta() {
+    pasta = await window.showDirectoryPicker({ id: "fotos-conferencia", mode: "readwrite" });
+    await idb("readwrite", st => st.put(pasta, "pasta"));
+    mostrarPasta();
+  }
+  async function garantirPasta() {  // chamada dentro do clique de OK (o navegador exige um clique)
+    if (!temPicker) return false;
+    if (!pasta) await escolherPasta();
+    const o = { mode: "readwrite" };
+    if ((await pasta.queryPermission(o)) !== "granted" && (await pasta.requestPermission(o)) !== "granted")
+      throw new Error("sem permissão para gravar na pasta");
+    return true;
+  }
+  $("b_pasta").onclick = async () => { try { await escolherPasta(); status(`Pasta escolhida: <b>${esc(pasta.name)}</b>`, "ok"); } catch (e) { if (e.name !== "AbortError") status(`Não consegui usar a pasta: ${esc(e.message)}`, "err"); } };
+  (async () => { if (temPicker) pasta = await idb("readonly", st => st.get("pasta")); mostrarPasta(); })();
+
+  // ---------- webcam (abre sozinha)
+  (async () => {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      video.srcObject = stream; await video.play();
+      $("ph").hidden = true; $("b_cap").disabled = false; $("b_cap").focus();
+      status("Webcam pronta. Enquadre a embalagem e clique em <b>Capturar</b> ou aperte <b>Enter</b>.");
+    } catch (e) {
+      const dica = e.name === "NotAllowedError" ? "Permita a câmera no ícone à esquerda do endereço e aperte F5." :
+                   e.name === "NotReadableError" ? "A câmera está em uso por outro programa ou aba (Teams, Zoom, outra aba)." :
+                   e.name === "NotFoundError" ? "Nenhuma câmera encontrada." : "";
+      $("ph").textContent = "Webcam não abriu";
+      status(`<b>Webcam não abriu:</b> ${esc(e.name)}. ${dica}`, "err");
+    }
+  })();
+
+  // ---------- captura → prévia → OK/Refazer
+  function capturar() {
+    if (!stream || revisando) return;
+    const w = video.videoWidth, h = video.videoHeight;
+    const fs = Math.max(16, Math.round(w / 55)), pad = Math.round(fs * .6), faixa = fs * 2 + pad * 3;
+    previa.width = w; previa.height = h + faixa;
+    const g = previa.getContext("2d");
+    g.drawImage(video, 0, 0, w, h);
+    g.fillStyle = "#111"; g.fillRect(0, h, w, faixa);
+    g.fillStyle = "#fff"; g.textBaseline = "top";
+    g.font = `600 ${fs}px "Segoe UI", Arial, sans-serif`;
+    g.fillText(`CAPTURA ${c.captura_data} ${c.captura_hora}   |   VENDA ${c.venda}   |   SKU ${c.sku}`, pad, h + pad);
+    g.font = `${fs}px "Segoe UI", Arial, sans-serif`;
+    g.fillText(`CLIENTE ${c.nome} (${c.apelido})   |   VENDA EM ${c.venda_em}`, pad, h + pad * 2 + fs);
+    $("flash").style.opacity = .8; setTimeout(() => $("flash").style.opacity = 0, 110);
+    video.hidden = true; previa.hidden = false; revisando = true;
+    $("a_cap").hidden = true; $("a_rev").hidden = false; $("b_ok").focus();
+    status("A foto ficou boa? <b>OK, salvar</b> (Enter) ou <b>Refazer</b> (Esc).");
+  }
+  function refazer() {
+    if (salvando) return;
+    revisando = false; previa.hidden = true; video.hidden = false;
+    $("a_rev").hidden = true; $("a_cap").hidden = false; $("b_cap").focus();
+    status("Enquadre de novo e capture.");
+  }
+
+  async function salvar() {
+    if (!revisando || salvando) return;
+    salvando = true; $("b_ok").disabled = $("b_refazer").disabled = true;
+    try {
+      const blob = await new Promise(r => previa.toBlob(r, "image/jpeg", .88));
+      let onde;
+      if (await garantirPasta()) {
+        const sub = await pasta.getDirectoryHandle(c.captura_data.slice(0, 7), { create: true });
+        let nome = c.arquivo, n = 2;
+        for (;;) { try { await sub.getFileHandle(nome); nome = c.arquivo.replace(/\.jpg$/i, `_${n++}.jpg`); } catch { break; } }
+        const fh = await sub.getFileHandle(nome, { create: true });
+        const wr = await fh.createWritable(); await wr.write(blob); await wr.close();
+        await registrar(nome);
+        onde = `${pasta.name}\\${c.captura_data.slice(0, 7)}\\${nome}`;
+        if (nome !== c.arquivo) status(`Já existia um arquivo com esse nome; salvei como <code>${esc(nome)}</code>.`, "warn");
+      } else {
+        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = c.arquivo; a.click();
+        onde = `Downloads\\${c.arquivo}`;
+      }
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      try { window.opener && window.opener.postMessage({ tipo: "foto_ok", venda: c.venda, arquivo: c.arquivo }, "*"); } catch {}
+      status(`✅ <b>Foto salva.</b> <code>${esc(onde)}</code><br>Esta aba vai fechar.`, "ok");
+      setTimeout(() => {
+        window.close();
+        setTimeout(() => status(`✅ <b>Foto salva.</b> <code>${esc(onde)}</code><br>Pode fechar esta aba e voltar ao painel.`, "ok"), 400);
+      }, 900);
+    } catch (e) {
+      salvando = false; $("b_ok").disabled = $("b_refazer").disabled = false;
+      status(`<b>Não salvou:</b> ${esc(e.message || e.name)}. A foto continua na tela: tente <b>OK</b> de novo ou troque a pasta.`, "err");
+    }
+  }
+
+  // registro local, uma linha por foto (mesmos dados do arquivo e da faixa)
+  async function registrar(nome) {
+    const fh = await pasta.getFileHandle("registro-fotos.csv", { create: true });
+    const atual = await (await fh.getFile()).text();
+    const cab = "captura_data;captura_hora;venda;sku;nome;apelido;venda_em;conta;arquivo\n";
+    const linha = [c.captura_data, c.captura_hora, c.venda, c.sku, c.nome, c.apelido, c.venda_em, c.conta,
+                   `${c.captura_data.slice(0, 7)}/${nome}`].map(x => String(x).replace(/[;\r\n]/g, " ")).join(";") + "\n";
+    const wr = await fh.createWritable(); await wr.write((atual || cab) + linha); await wr.close();
+  }
+
+  $("b_cap").onclick = capturar; $("b_refazer").onclick = refazer; $("b_ok").onclick = salvar;
+  document.addEventListener("keydown", e => {
+    if (e.target.tagName === "BUTTON" && (e.key === "Enter" || e.key === " ")) return;  // o próprio botão trata
+    if (e.key === "Enter") { e.preventDefault(); revisando ? salvar() : capturar(); }
+    else if (e.key === "Escape" && revisando) { e.preventDefault(); refazer(); }
+  });
+})();
+</script>
+</body>
+</html>
