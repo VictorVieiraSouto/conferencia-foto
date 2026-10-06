@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste Webcam Conferência</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--tx:#1d2330;--mut:#5f6b7a;--bd:#d9dee5;--pri:#1f6feb;--ok:#1a7f37;--err:#c62828;--warn:#9a6700}
+  @media (prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2128;--tx:#e6e9ee;--mut:#9aa4b2;--bd:#323844;--pri:#4c8dff;--ok:#3fb950;--err:#f85149;--warn:#d29922}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+  main{max-width:1100px;margin:0 auto;padding:16px}
+  h1{font-size:20px;margin:4px 0 2px} .sub{color:var(--mut);margin:0 0 14px}
+  .grid{display:grid;grid-template-columns:340px 1fr;gap:14px} @media (max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}
+  .card h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 10px}
+  label{display:block;font-size:13px;color:var(--mut);margin:8px 0 3px}
+  input{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--tx);font:inherit}
+  button{font:inherit;padding:9px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer}
+  button.pri{background:var(--pri);border-color:var(--pri);color:#fff;font-weight:600}
+  button.big{font-size:18px;padding:14px 22px;width:100%}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .diag div{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px dashed var(--bd);font-size:13px}
+  .ok{color:var(--ok);font-weight:600} .err{color:var(--err);font-weight:600} .warn{color:var(--warn);font-weight:600}
+  .stage{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center}
+  video{width:100%;height:100%;object-fit:contain} .stage .ph{color:#aaa;position:absolute}
+  .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .25s}
+  #status{margin-top:10px;padding:10px;border-radius:8px;border:1px solid var(--bd);min-height:42px;font-size:14px}
+  #ultima img{width:100%;border-radius:8px;border:1px solid var(--bd);margin-top:8px}
+  code,pre{font:12px/1.4 ui-monospace,Consolas,monospace} pre{white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:8px;margin:6px 0 0}
+  .muted{color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Teste: webcam + foto da conferência</h1>
+  <p class="sub">Página de teste, separada do painel. Os dados da venda abaixo são fictícios e podem ser editados.</p>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>1. Diagnóstico deste navegador</h2>
+        <div class="diag" id="diag"></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h2>2. Venda (exemplo)</h2>
+        <label>Nome do destinatário</label><input id="f_nome" value="Maria da Silva">
+        <label>Apelido no ML</label><input id="f_apelido" value="MARIASILVA123">
+        <label>Número da venda</label><input id="f_venda" value="2000009876543210">
+        <label>SKU(s) — separe por vírgula</label><input id="f_sku" value="ABC123">
+        <label>Data/hora da venda</label><input id="f_dvenda" value="2026-10-05 10:12">
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>3. Pasta, webcam e captura</h2>
+        <div class="row" style="margin-top:0">
+          <button id="b_pasta">Escolher pasta das fotos</button>
+          <button id="b_cam" class="pri">Abrir webcam</button>
+        </div>
+        <p class="muted" id="pastaInfo">Pasta: nenhuma escolhida (sem pasta, a foto vai para Downloads).</p>
+        <div class="stage" style="margin-top:10px">
+          <span class="ph" id="ph">Webcam fechada</span>
+          <video id="video" playsinline muted></video>
+          <div class="flash" id="flash"></div>
+        </div>
+        <div class="row"><button id="b_cap" class="pri big" disabled>📸 Capturar e finalizar (Enter)</button></div>
+        <div id="status" class="muted">Aguardando.</div>
+      </div>
+
+      <div class="card" style="margin-top:14px" id="ultima">
+        <h2>4. Última captura</h2>
+        <p class="muted" id="ult_txt">Nenhuma ainda.</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $("video");
+  let stream = null, pastaRaiz = null;
+
+  // ---------- diagnóstico
+  function diag() {
+    const emIframe = (() => { try { return window.self !== window.top; } catch { return true; } })();
+    const itens = [
+      ["Contexto seguro (necessário p/ webcam)", window.isSecureContext, ""],
+      ["API de câmera (getUserMedia)", !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia), ""],
+      ["Salvar direto em pasta (File System Access)", "showDirectoryPicker" in window, "sem isso: vai para Downloads"],
+      ["Rodando dentro de outra página (iframe)", emIframe, "iframe costuma bloquear"],
+      ["Endereço", location.protocol.replace(":", ""), ""],
+    ];
+    $("diag").innerHTML = itens.map(([n, v, nota]) => {
+      const cls = typeof v === "boolean" ? ((n.includes("iframe") ? !v : v) ? "ok" : "warn") : "";
+      const txt = typeof v === "boolean" ? (v ? "sim" : "não") : v;
+      return `<div><span>${n}${nota ? `<br><span class="muted">${nota}</span>` : ""}</span><span class="${cls}">${txt}</span></div>`;
+    }).join("");
+  }
+  diag();
+
+  function status(msg, tipo = "") {
+    const s = $("status");
+    s.className = tipo; s.innerHTML = msg;
+  }
+
+  // ---------- pasta (lembrada entre aberturas, se o navegador permitir)
+  const IDB = "teste_webcam", ST = "h";
+  function idb(modo, fn) {
+    return new Promise((res) => {
+      try {
+        const r = indexedDB.open(IDB, 1);
+        r.onupgradeneeded = () => r.result.createObjectStore(ST);
+        r.onsuccess = () => {
+          try {
+            const tx = r.result.transaction(ST, modo); const st = tx.objectStore(ST);
+            const q = fn(st); tx.oncomplete = () => res(q && q.result); tx.onerror = () => res(null);
+          } catch { res(null); }
+        };
+        r.onerror = () => res(null);
+      } catch { res(null); }
+    });
+  }
+  async function mostrarPasta() {
+    $("pastaInfo").textContent = pastaRaiz ? `Pasta: ${pastaRaiz.name} (as fotos vão em subpastas por mês)` :
+      "Pasta: nenhuma escolhida (sem pasta, a foto vai para Downloads).";
+  }
+  (async () => {
+    const h = await idb("readonly", st => st.get("pasta"));
+    if (h) { pastaRaiz = h; $("pastaInfo").textContent = `Pasta lembrada: ${h.name} (o Chrome pode pedir para confirmar o acesso na primeira foto)`; }
+  })();
+
+  $("b_pasta").onclick = async () => {
+    if (!("showDirectoryPicker" in window)) { status("Este navegador não permite escolher pasta. Use o Google Chrome ou o Edge, abrindo o arquivo direto do computador.", "warn"); return; }
+    try {
+      pastaRaiz = await window.showDirectoryPicker({ id: "fotos-conferencia", mode: "readwrite" });
+      await idb("readwrite", st => st.put(pastaRaiz, "pasta"));
+      mostrarPasta(); status(`Pasta escolhida: <b>${pastaRaiz.name}</b>`, "ok");
+    } catch (e) {
+      if (e.name !== "AbortError") status(`Não consegui usar a pasta: ${e.name} — ${e.message}`, "err");
+    }
+  };
+
+  async function permissaoPasta() {
+    if (!pastaRaiz) return false;
+    try {
+      const o = { mode: "readwrite" };
+      if ((await pastaRaiz.queryPermission(o)) === "granted") return true;
+      return (await pastaRaiz.requestPermission(o)) === "granted";
+    } catch { return false; }
+  }
+
+  // ---------- webcam
+  $("b_cam").onclick = async () => {
+    if (stream) { fechar(); return; }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      video.srcObject = stream; await video.play();
+      $("ph").style.display = "none"; $("b_cap").disabled = false; $("b_cam").textContent = "Fechar webcam";
+      const t = stream.getVideoTracks()[0], c = t.getSettings();
+      status(`Webcam aberta: <b>${t.label || "câmera"}</b> — ${c.width}×${c.height}. Clique em Capturar ou aperte Enter.`, "ok");
+    } catch (e) {
+      const dica = e.name === "NotAllowedError" ? "Permissão negada (pelo navegador ou pela página onde isto está aberto)." :
+                   e.name === "NotFoundError" ? "Nenhuma câmera encontrada." :
+                   e.name === "NotReadableError" ? "A câmera está em uso por outro programa (Teams, Zoom…)." : "";
+      status(`<b>Webcam não abriu:</b> ${e.name} — ${e.message}<br>${dica}`, "err");
+      stream = null;
+    }
+  };
+  function fechar() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; video.srcObject = null;
+    $("ph").style.display = ""; $("b_cap").disabled = true; $("b_cam").textContent = "Abrir webcam";
+  }
+
+  // ---------- carimbo único (mesmo texto no arquivo, na foto e no registro)
+  const p2 = n => String(n).padStart(2, "0");
+  const limpo = s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  function carimbo() {
+    const d = new Date();
+    const data = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    const hora = `${p2(d.getHours())}h${p2(d.getMinutes())}m${p2(d.getSeconds())}`;
+    const skus = $("f_sku").value.split(/[,;]+/).map(limpo).filter(Boolean);
+    const dv = $("f_dvenda").value.trim().replace(/(\d{1,2}):(\d{2})(?::(\d{2}))?/, (_, h, m, s) => `${p2(h)}h${m}m${s || "00"}`);
+    const c = {
+      captura_data: data, captura_hora: hora,
+      venda: limpo($("f_venda").value), sku: skus.join("+"),
+      nome: limpo($("f_nome").value), apelido: limpo($("f_apelido").value),
+      venda_em: limpo(dv).replace(/-(\d{2}h)/, " $1"),
+    };
+    let base = `${c.captura_data}_${c.captura_hora}_venda-${c.venda}_SKU-${c.sku}_${c.nome}`;
+    if (base.length > 150) base = base.slice(0, 150).replace(/-+$/, "");
+    c.arquivo = base + ".jpg";
+    c.pasta_mes = data.slice(0, 7);
+    return c;
+  }
+
+  function desenhar(c) {
+    const w = video.videoWidth, h = video.videoHeight;
+    const cv = document.createElement("canvas");
+    const fs = Math.max(16, Math.round(w / 55)), pad = Math.round(fs * .6), faixa = fs * 2 + pad * 3;
+    cv.width = w; cv.height = h + faixa;
+    const g = cv.getContext("2d");
+    g.drawImage(video, 0, 0, w, h);
+    g.fillStyle = "#111"; g.fillRect(0, h, w, faixa);
+    g.fillStyle = "#fff"; g.font = `600 ${fs}px Segoe UI, Arial, sans-serif`; g.textBaseline = "top";
+    g.fillText(`CAPTURA ${c.captura_data} ${c.captura_hora}   |   VENDA ${c.venda}   |   SKU ${c.sku}`, pad, h + pad);
+    g.font = `${fs}px Segoe UI, Arial, sans-serif`;
+    g.fillText(`CLIENTE ${c.nome} (${c.apelido})   |   VENDA EM ${c.venda_em}`, pad, h + pad * 2 + fs);
+    return cv;
+  }
+
+  async function salvar(blob, c) {
+    if (pastaRaiz && await permissaoPasta()) {
+      const sub = await pastaRaiz.getDirectoryHandle(c.pasta_mes, { create: true });
+      let nome = c.arquivo, n = 2;
+      while (true) { try { await sub.getFileHandle(nome); nome = c.arquivo.replace(/\.jpg$/, `_${n++}.jpg`); } catch { break; } }
+      const fh = await sub.getFileHandle(nome, { create: true });
+      const wr = await fh.createWritable(); await wr.write(blob); await wr.close();
+      c.arquivo = nome;
+      await registrar(c);
+      return `${pastaRaiz.name}\\${c.pasta_mes}\\${nome}`;
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = c.arquivo; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    return `Downloads\\${c.arquivo} (sem pasta escolhida)`;
+  }
+
+  // registro de teste: uma linha por foto em registro-teste.csv, na pasta escolhida
+  async function registrar(c) {
+    const fh = await pastaRaiz.getFileHandle("registro-teste.csv", { create: true });
+    const atual = await (await fh.getFile()).text();
+    const cab = "captura_data;captura_hora;venda;sku;nome;apelido;venda_em;arquivo\n";
+    const linha = [c.captura_data, c.captura_hora, c.venda, c.sku, c.nome, c.apelido, c.venda_em, `${c.pasta_mes}/${c.arquivo}`].join(";") + "\n";
+    const wr = await fh.createWritable(); await wr.write((atual || cab) + linha); await wr.close();
+  }
+
+  async function capturar() {
+    if (!stream || $("b_cap").disabled) return;
+    $("b_cap").disabled = true;
+    try {
+      const c = carimbo();
+      const cv = desenhar(c);
+      $("flash").style.opacity = .8; setTimeout(() => $("flash").style.opacity = 0, 120);
+      const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", .88));
+      const onde = await salvar(blob, c);
+      status(`✅ <b>Foto salva e venda finalizada</b><br><code>${onde}</code>`, "ok");
+      const reg = { ...c }; delete reg.pasta_mes;
+      $("ultima").innerHTML = `<h2>4. Última captura</h2>
+        <div class="muted">Registro (mesmos dados do arquivo e da faixa na foto):</div>
+        <pre>${JSON.stringify(reg, null, 1)}</pre><img src="${cv.toDataURL("image/jpeg", .6)}" alt="última captura">`;
+    } catch (e) {
+      status(`<b>Falhou ao salvar — venda NÃO finalizada:</b> ${e.name} — ${e.message}`, "err");
+    } finally {
+      setTimeout(() => { if (stream) $("b_cap").disabled = false; $("f_venda").focus(); $("f_venda").select(); }, 600);
+    }
+  }
+  $("b_cap").onclick = capturar;
+  document.addEventListener("keydown", e => { if (e.key === "Enter" && stream) { e.preventDefault(); capturar(); } });
+})();
+</script>
+</body>
+</html>
